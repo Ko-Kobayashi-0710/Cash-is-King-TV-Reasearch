@@ -27,6 +27,7 @@ from agent.fetcher import (
     fetch_ir_page_and_pdfs,
     fetch_news_and_industry,
     fetch_competitor_tickers,
+    fetch_youtube_transcripts,
 )
 from agent.edinet import fetch_securities_report_text
 from agent.analyzer import (
@@ -185,10 +186,13 @@ def main():
     else:
         print("\n--- 1-4. IRページ: スキップ ---")
 
-    # 1-5. Web検索でニュース・業界動向を収集
-    print("\n--- 1-5. Web検索: ニュース・業界動向 ---")
+    # 1-5. Web検索でニュース・インタビュー・業界動向を収集
+    print("\n--- 1-5. Web検索: ニュース・インタビュー・業界動向 ---")
     news_data = fetch_news_and_industry(company_name, ticker)
-    print(f"[Web] ニュース: {len(news_data.get('company_news', []))} 件, 業界動向: {len(news_data.get('industry_trends', []))} 件")
+
+    # 1-6. YouTube字幕取得
+    print("\n--- 1-6. YouTube: 字幕・文字起こし ---")
+    youtube_transcripts = fetch_youtube_transcripts(company_name, max_videos=3)
 
     # -------------------------------------------------------------------
     # STEP 2: 財務構造の解剖
@@ -238,6 +242,7 @@ def main():
         ir_result=ir_result,
         news_data=news_data,
         yf_ticker=ticker,
+        youtube_transcripts=youtube_transcripts,
     )
 
     data_dump = build_data_dump(
@@ -250,6 +255,7 @@ def main():
         competitor_comparison=competitor_comparison,
         competitors_raw=competitors_raw,
         sources=sources,
+        youtube_transcripts=youtube_transcripts,
     )
 
     # -------------------------------------------------------------------

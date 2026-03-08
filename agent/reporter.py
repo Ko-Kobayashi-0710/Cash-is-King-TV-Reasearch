@@ -29,6 +29,7 @@ def build_data_dump(
     competitor_comparison: str,
     competitors_raw: dict,
     sources: list[dict],
+    youtube_transcripts: Optional[list[dict]] = None,
 ) -> str:
     """
     収集したデータをClaude.aiに貼り付け用のmarkdown形式でまとめる。
@@ -78,26 +79,70 @@ def build_data_dump(
             sections.append(text[:8000])
             sections.append("")
 
-    # ニュース・業界動向
+    # ニュース・動向
     news_items = news_data.get("company_news", [])[:10]
-    industry_items = news_data.get("industry_trends", [])[:5]
-
     if news_items:
         sections.append("## 直近のニュース・動向")
         for item in news_items:
             title = item.get("title", "")
             url = item.get("url", "")
-            body = item.get("body", "")[:300]
-            sections.append(f"- **{title}** ({url})\n  {body}")
+            full_text = item.get("full_text", "")
+            snippet = item.get("body", "")[:300]
+            content = full_text[:1500] if full_text else snippet
+            sections.append(f"### {title}\n出典: {url}\n\n{content}")
+            sections.append("")
         sections.append("")
 
+    # インタビュー記事
+    interview_items = news_data.get("interviews", [])[:5]
+    if interview_items:
+        sections.append("## 経営陣インタビュー・発言")
+        for item in interview_items:
+            title = item.get("title", "")
+            url = item.get("url", "")
+            full_text = item.get("full_text", "")
+            snippet = item.get("body", "")[:300]
+            content = full_text[:2000] if full_text else snippet
+            sections.append(f"### {title}\n出典: {url}\n\n{content}")
+            sections.append("")
+        sections.append("")
+
+    # 業界動向
+    industry_items = news_data.get("industry_trends", [])[:5]
     if industry_items:
-        sections.append("## 業界動向")
+        sections.append("## 業界動向・市場分析")
         for item in industry_items:
             title = item.get("title", "")
             url = item.get("url", "")
-            body = item.get("body", "")[:300]
-            sections.append(f"- **{title}** ({url})\n  {body}")
+            full_text = item.get("full_text", "")
+            snippet = item.get("body", "")[:300]
+            content = full_text[:1500] if full_text else snippet
+            sections.append(f"### {title}\n出典: {url}\n\n{content}")
+            sections.append("")
+        sections.append("")
+
+    # アナリスト・投資家レポート
+    analyst_items = news_data.get("analyst_reports", [])[:3]
+    if analyst_items:
+        sections.append("## アナリスト・投資家向けレポート")
+        for item in analyst_items:
+            title = item.get("title", "")
+            url = item.get("url", "")
+            full_text = item.get("full_text", "")
+            snippet = item.get("body", "")[:300]
+            content = full_text[:1500] if full_text else snippet
+            sections.append(f"### {title}\n出典: {url}\n\n{content}")
+            sections.append("")
+        sections.append("")
+
+    # YouTube字幕
+    if youtube_transcripts:
+        sections.append("## YouTube動画（字幕・文字起こし）")
+        for yt in youtube_transcripts:
+            url = yt.get("url", "")
+            text = yt.get("text", "")
+            sections.append(f"### 動画: {url}\n\n{text}")
+            sections.append("")
         sections.append("")
 
     # 参照URL一覧
@@ -248,6 +293,7 @@ def build_sources_list(
     ir_result: dict,
     news_data: dict,
     yf_ticker: str,
+    youtube_transcripts: Optional[list[dict]] = None,
 ) -> list[dict]:
     """収集した全情報源のリストを構築する"""
     sources = []
@@ -281,11 +327,26 @@ def build_sources_list(
             "date": pdf_info.get("retrieved_date", today),
         })
 
-    for item in news_data.get("company_news", [])[:10]:
-        url = item.get("url", "")
+    for category, label in [
+        ("company_news", "ニュース"),
+        ("interviews", "インタビュー"),
+        ("industry_trends", "業界動向"),
+        ("analyst_reports", "アナリストレポート"),
+    ]:
+        for item in news_data.get(category, [])[:10]:
+            url = item.get("url", "")
+            if url:
+                sources.append({
+                    "name": f"[{label}] {item.get('title', '')[:50]}",
+                    "url": url,
+                    "date": today,
+                })
+
+    for yt in (youtube_transcripts or []):
+        url = yt.get("url", "")
         if url:
             sources.append({
-                "name": item.get("title", "ニュース記事")[:50],
+                "name": f"[YouTube] {url}",
                 "url": url,
                 "date": today,
             })
