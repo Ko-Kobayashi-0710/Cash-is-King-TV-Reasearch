@@ -40,6 +40,7 @@ from agent.analyzer import (
 )
 from agent.reporter import (
     generate_report,
+    generate_podcast_script,
     save_report,
     build_sources_list,
 )
@@ -257,12 +258,20 @@ def main():
     )
 
     # -------------------------------------------------------------------
-    # レポート保存
+    # Podcast原稿生成
     # -------------------------------------------------------------------
-    output_path = save_report(company_name, report_text, output_dir)
+    print("\n【STEP 6】Podcast原稿生成\n")
+    print("=" * 60)
+    podcast_script = generate_podcast_script(company_name, report_text)
+    print("=" * 60)
+
+    # -------------------------------------------------------------------
+    # レポート保存（リサーチ + Podcast原稿を同ファイルに）
+    # -------------------------------------------------------------------
+    output_path = save_report(company_name, report_text, output_dir, podcast_script=podcast_script)
     print(f"\n{'='*60}")
     print(f"✅ 分析完了!")
-    print(f"   レポート: {output_path}")
+    print(f"   レポート＋Podcast原稿: {output_path}")
     print(f"{'='*60}\n")
 
 

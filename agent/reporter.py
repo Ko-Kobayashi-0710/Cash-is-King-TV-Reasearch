@@ -222,8 +222,113 @@ def generate_report(
     return report_text
 
 
-def save_report(company_name: str, report_text: str, output_dir: Path) -> Path:
-    """レポートをファイルに保存する"""
+def generate_podcast_script(company_name: str, report_text: str) -> str:
+    """
+    リサーチレポートをもとにPodcast原稿（即興用セクション＋箇条書き形式）を生成する。
+    """
+    client = anthropic.Anthropic(
+        api_key=os.environ.get("ANTHROPIC_API_KEY", "")
+    )
+
+    system_prompt = _load_system_prompt()
+
+    user_prompt = f"""以下は「{company_name}」のCash is King分析レポートです。
+このレポートをもとに、ポッドキャスト「Cash is King TV」の収録用原稿を生成してください。
+
+---
+{report_text}
+---
+
+**原稿の形式（必ずこの構造で）:**
+
+原稿はホストが即興で話すための「要点メモ」形式にしてください。
+完全な台本ではなく、各セクションに「話すべきポイント」を箇条書きで記載します。
+
+```markdown
+# {company_name} Podcast原稿
+
+> 収録目安: 20〜30分
+
+## 【オープニング】掴み（2〜3分）
+- （番組の始まり方、今日のテーマを示す一言）
+- （この会社を選んだ理由・今注目すべき理由を1〜2行で）
+- （リスナーへの問いかけ例）
+
+## 【パート1】この会社、何をしている会社？（3〜4分）
+- （ビジネスを一言で説明するフレーズ）
+- （売上・規模感の数字）
+- （直感的に「へぇ」となる事実1〜2個）
+
+## 【パート2】財務を解剖する（5〜7分）
+- （PL・CF・BSで最も重要な数字とその意味）
+- （競合との比較で浮かび上がること）
+- （「普通の会社と何が違うか」を表す指標）
+
+## 【パート3】Cash is King 3軸評価（7〜10分）
+### ① 他人のカネで回す
+- （CCC・前受金・タイミングの話）
+- （具体的数値と「なぜそれが可能か」の構造）
+
+### ② 使ったカネが残存する
+- （固定資産・減価償却・FCFの話）
+- （「投資が消えずに残る」仕組み）
+
+### ③ 投じるほど効率が上がる
+- （ROIC・規模の経済・ネットワーク効果）
+- （なぜ後発が追いつけないか）
+
+## 【パート4】Cash is Kingの秘訣（5〜7分）
+- （「秘訣の命名」を紹介）
+- （逆説的な発見・驚きポイント）
+- （なぜこの構造が強固なのか）
+
+## 【パート5】なぜ今注目か・スタートアップへの示唆（3〜4分）
+- （今のタイミングで取り上げる理由）
+- （起業家・投資家が学べること1〜2個）
+
+## 【クロージング】まとめ（1〜2分）
+- （今日のキーメッセージ1行）
+- （次回への橋渡し・告知）
+```
+
+**重要な指示:**
+- 箇条書きは体言止め・キーワード中心で。話す内容をすべて書かない
+- 数字は具体的に（「大きい」ではなく「売上1,000億円規模」）
+- 「Cash is Kingの秘訣」の命名はレポートと同じものを使う
+- リスナーへの問いかけや「驚き」の瞬間を各パートに1つ意識する
+"""
+
+    print(f"\n[Reporter] Podcast原稿を生成中...")
+    podcast_text = ""
+
+    try:
+        with client.messages.stream(
+            model="claude-opus-4-6",
+            max_tokens=4096,
+            thinking={"type": "adaptive"},
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+        ) as stream:
+            for text in stream.text_stream:
+                print(text, end="", flush=True)
+                podcast_text += text
+
+        print(f"\n[Reporter] Podcast原稿 生成完了")
+
+    except anthropic.APIError as e:
+        podcast_text = f"\n\n⚠️ Podcast原稿生成エラー: {e}\n"
+        print(podcast_text)
+
+    return podcast_text
+
+
+def save_report(
+    company_name: str,
+    report_text: str,
+    output_dir: Path,
+    podcast_script: Optional[str] = None,
+) -> Path:
+    """レポートをファイルに保存する（Podcast原稿を同ファイルの2セクション目に追記）"""
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # ファイル名に使えない文字を除去
@@ -235,7 +340,11 @@ def save_report(company_name: str, report_text: str, output_dir: Path) -> Path:
     filename = f"{safe_name}_cash_is_king.md"
     output_path = output_dir / filename
 
-    output_path.write_text(report_text, encoding="utf-8")
+    content = report_text
+    if podcast_script:
+        content += "\n\n---\n\n" + podcast_script
+
+    output_path.write_text(content, encoding="utf-8")
     print(f"\n[Reporter] レポートを保存しました: {output_path}")
     return output_path
 
