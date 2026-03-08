@@ -1,15 +1,11 @@
 """
-LLM呼び出し・レポート生成モジュール
-Claude API（claude-opus-4-6）を使ってCash is King分析レポートを生成する
+データダンプ・ファイル出力モジュール
+収集した財務データ・ニュースをClaude.aiに貼り付け用のmarkdownファイルとして出力する
 """
 
-import os
-import json
 import datetime
 from pathlib import Path
 from typing import Optional
-
-import anthropic
 
 
 SYSTEM_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "system.md"
@@ -23,21 +19,30 @@ def _load_system_prompt() -> str:
         return "あなたはポッドキャスト「Cash is King TV」のリサーチャーです。"
 
 
-def _build_analysis_prompt(
+def build_data_dump(
     company_name: str,
     ticker: str,
     financial_summary: str,
-    edinet_text: Optional[str],
-    ir_pdfs: list[dict],
+    edinet_result: dict,
+    ir_result: dict,
     news_data: dict,
     competitor_comparison: str,
     competitors_raw: dict,
     sources: list[dict],
 ) -> str:
-    """LLMへの分析依頼プロンプトを構築する"""
-
+    """
+    収集したデータをClaude.aiに貼り付け用のmarkdown形式でまとめる。
+    ファイル末尾にシステムプロンプト＋分析依頼プロンプトを付与する。
+    """
     sections = []
-    sections.append(f"# 分析対象: {company_name}（ティッカー: {ticker}）")
+
+    # ヘッダー
+    today = datetime.date.today().isoformat()
+    sections.append(f"# {company_name} リサーチデータ（{today}）")
+    sections.append("")
+    sections.append("> このファイルをClaude.aiに貼り付けて分析レポートを生成してください。")
+    sections.append("")
+    sections.append("---")
     sections.append("")
 
     # 財務サマリー
@@ -52,19 +57,25 @@ def _build_analysis_prompt(
         sections.append("")
 
     # EDINET有価証券報告書
+    edinet_text = edinet_result.get("text") if edinet_result else None
     if edinet_text:
         sections.append("## 有価証券報告書（EDINET）からの抜粋")
-        sections.append(edinet_text[:15000])  # 最大15,000字
+        sections.append(edinet_text[:15000])
+        sections.append("")
+    elif edinet_result and edinet_result.get("error"):
+        sections.append("## 有価証券報告書（EDINET）")
+        sections.append(f"⚠️ 未取得: {edinet_result['error']}")
         sections.append("")
 
     # IRページのPDF
+    ir_pdfs = ir_result.get("pdfs", []) if ir_result else []
     if ir_pdfs:
         sections.append("## IRページ・決算説明資料からの抜粋")
         for pdf_info in ir_pdfs[:2]:
             url = pdf_info.get("url", "")
             text = pdf_info.get("text", "")
             sections.append(f"### 出典: {url}")
-            sections.append(text[:8000])  # 各PDF最大8,000字
+            sections.append(text[:8000])
             sections.append("")
 
     # ニュース・業界動向
@@ -89,19 +100,29 @@ def _build_analysis_prompt(
             sections.append(f"- **{title}** ({url})\n  {body}")
         sections.append("")
 
-    # 参照URL一覧（後で参照資料テーブルに使う）
+    # 参照URL一覧
     sections.append("## 収集済み参照資料")
     for s in sources:
         sections.append(f"- {s.get('name', '')}: {s.get('url', '')} ({s.get('date', '')})")
     sections.append("")
 
-    # 分析依頼
+    # ===================================================================
+    # Claude.aiへの依頼プロンプト
+    # ===================================================================
     sections.append("---")
     sections.append("")
-    sections.append("## 分析レポート生成依頼")
+    sections.append("## ▼ ここから下をClaude.aiへのプロンプトとして使用してください")
+    sections.append("")
+    sections.append("```")
+    sections.append(_load_system_prompt())
+    sections.append("```")
     sections.append("")
     sections.append(f"""
-上記のデータをもとに、{company_name} の Cash is King 分析レポートを以下のフォーマットで生成してください。
+上記のデータをもとに、{company_name} の Cash is King 分析を **2つ** 生成してください。
+
+---
+
+### 【出力1】リサーチレポート（markdown形式）
 
 **重要な指示:**
 1. ファクトなき考察は書かない。必ず数字か一次情報に根拠を置く
@@ -109,12 +130,11 @@ def _build_analysis_prompt(
 3. 驚きのある考察を必ず1つ入れる（「実は○○だった」という逆説的発見）
 4. 比較なき分析は弱い。必ず競合・類似業態と比べて相対化する
 5. 「Cash is Kingの秘訣」は必ず独自の命名をする（例：「撤去できない資産が生む二重ロック」）
-6. データが取得できなかった項目は推測ではなく「データ未取得」と明記する
+6. データが取得できなかった項目は「データ未取得」と明記する
 7. 推測・仮説は「〜と考えられる」と明示し、ファクトと混在させない
 
-**出力フォーマット（必ずこの構造で）:**
+**レポートの構造:**
 
-```markdown
 # {company_name} Cash is King分析
 
 ## 1. 外観
@@ -136,128 +156,35 @@ def _build_analysis_prompt(
 （表形式＋考察500字以上）
 
 ## 5. Cash is Kingの秘訣
-（必ず独自の命名をすること。例：「XXXが生むYYY効果」）
-（ここが番組のメインコンテンツ。最も驚きのある考察を500〜800字で）
+（必ず独自の命名をすること。500〜800字）
 
 ## 6. なぜ今注目されるのか
-（M&A・IPO・業界変化・政策変更などのフック。200〜400字）
+（200〜400字）
 
 ## 7. スタートアップへの示唆
-（このビジネス構造から起業家・投資家が学べること。200〜400字）
+（200〜400字）
 
 ## 参照資料
 | 資料名 | URL | 取得日 |
 |---|---|---|
-（収集した全URLを記載）
-```
-""")
-
-    return "\n".join(sections)
-
-
-def generate_report(
-    company_name: str,
-    ticker: str,
-    financial_summary: str,
-    edinet_result: dict,
-    ir_result: dict,
-    news_data: dict,
-    competitor_comparison: str,
-    competitors_raw: dict,
-    sources: list[dict],
-) -> str:
-    """
-    Claude APIを呼び出してCash is King分析レポートを生成する。
-    ストリーミングで出力し、完成したMarkdown文字列を返す。
-    """
-    client = anthropic.Anthropic(
-        api_key=os.environ.get("ANTHROPIC_API_KEY", "")
-    )
-
-    system_prompt = _load_system_prompt()
-
-    edinet_text = edinet_result.get("text") if edinet_result else None
-    ir_pdfs = ir_result.get("pdfs", []) if ir_result else []
-
-    user_prompt = _build_analysis_prompt(
-        company_name=company_name,
-        ticker=ticker,
-        financial_summary=financial_summary,
-        edinet_text=edinet_text,
-        ir_pdfs=ir_pdfs,
-        news_data=news_data,
-        competitor_comparison=competitor_comparison,
-        competitors_raw=competitors_raw,
-        sources=sources,
-    )
-
-    print(f"\n[Reporter] Claude API ({company_name}) にレポート生成を依頼中...")
-    print("[Reporter] ストリーミング出力開始:\n")
-    print("=" * 60)
-
-    report_text = ""
-
-    try:
-        with client.messages.stream(
-            model="claude-opus-4-6",
-            max_tokens=8192,
-            thinking={"type": "adaptive"},
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-        ) as stream:
-            for text in stream.text_stream:
-                print(text, end="", flush=True)
-                report_text += text
-
-        final_message = stream.get_final_message()
-        usage = final_message.usage
-        print(f"\n\n[Reporter] 完了 - 入力: {usage.input_tokens} tokens, 出力: {usage.output_tokens} tokens")
-
-    except anthropic.APIError as e:
-        error_msg = f"\n\n⚠️ Claude API エラー: {e}\n\nデータ収集は完了していますが、レポート生成に失敗しました。"
-        print(error_msg)
-        report_text = error_msg
-
-    print("=" * 60)
-    return report_text
-
-
-def generate_podcast_script(company_name: str, report_text: str) -> str:
-    """
-    リサーチレポートをもとにPodcast原稿（即興用セクション＋箇条書き形式）を生成する。
-    """
-    client = anthropic.Anthropic(
-        api_key=os.environ.get("ANTHROPIC_API_KEY", "")
-    )
-
-    system_prompt = _load_system_prompt()
-
-    user_prompt = f"""以下は「{company_name}」のCash is King分析レポートです。
-このレポートをもとに、ポッドキャスト「Cash is King TV」の収録用原稿を生成してください。
 
 ---
-{report_text}
----
 
-**原稿の形式（必ずこの構造で）:**
+### 【出力2】Podcast収録用原稿（即興用メモ形式）
 
-原稿はホストが即興で話すための「要点メモ」形式にしてください。
-完全な台本ではなく、各セクションに「話すべきポイント」を箇条書きで記載します。
-
-```markdown
 # {company_name} Podcast原稿
 
 > 収録目安: 20〜30分
 
 ## 【オープニング】掴み（2〜3分）
-- （番組の始まり方、今日のテーマを示す一言）
-- （この会社を選んだ理由・今注目すべき理由を1〜2行で）
+- （番組の始まり方・今日のテーマ）
+- （この会社を選んだ理由・今注目すべき理由）
 - （リスナーへの問いかけ例）
 
 ## 【パート1】この会社、何をしている会社？（3〜4分）
 - （ビジネスを一言で説明するフレーズ）
 - （売上・規模感の数字）
-- （直感的に「へぇ」となる事実1〜2個）
+- （直感的に「へぇ」となる事実）
 
 ## 【パート2】財務を解剖する（5〜7分）
 - （PL・CF・BSで最も重要な数字とその意味）
@@ -266,72 +193,43 @@ def generate_podcast_script(company_name: str, report_text: str) -> str:
 
 ## 【パート3】Cash is King 3軸評価（7〜10分）
 ### ① 他人のカネで回す
-- （CCC・前受金・タイミングの話）
-- （具体的数値と「なぜそれが可能か」の構造）
-
+- （CCC・前受金・タイミングの話と数値）
 ### ② 使ったカネが残存する
-- （固定資産・減価償却・FCFの話）
-- （「投資が消えずに残る」仕組み）
-
+- （固定資産・減価償却・FCFの話と数値）
 ### ③ 投じるほど効率が上がる
 - （ROIC・規模の経済・ネットワーク効果）
-- （なぜ後発が追いつけないか）
 
 ## 【パート4】Cash is Kingの秘訣（5〜7分）
-- （「秘訣の命名」を紹介）
+- （秘訣の命名を紹介）
 - （逆説的な発見・驚きポイント）
 - （なぜこの構造が強固なのか）
 
 ## 【パート5】なぜ今注目か・スタートアップへの示唆（3〜4分）
 - （今のタイミングで取り上げる理由）
-- （起業家・投資家が学べること1〜2個）
+- （起業家・投資家が学べること）
 
 ## 【クロージング】まとめ（1〜2分）
 - （今日のキーメッセージ1行）
-- （次回への橋渡し・告知）
-```
+- （次回への橋渡し）
 
-**重要な指示:**
-- 箇条書きは体言止め・キーワード中心で。話す内容をすべて書かない
+**原稿の注意事項:**
+- 箇条書きは体言止め・キーワード中心で。完全な文章にしない
 - 数字は具体的に（「大きい」ではなく「売上1,000億円規模」）
 - 「Cash is Kingの秘訣」の命名はレポートと同じものを使う
-- リスナーへの問いかけや「驚き」の瞬間を各パートに1つ意識する
-"""
+""")
 
-    print(f"\n[Reporter] Podcast原稿を生成中...")
-    podcast_text = ""
-
-    try:
-        with client.messages.stream(
-            model="claude-opus-4-6",
-            max_tokens=4096,
-            thinking={"type": "adaptive"},
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-        ) as stream:
-            for text in stream.text_stream:
-                print(text, end="", flush=True)
-                podcast_text += text
-
-        print(f"\n[Reporter] Podcast原稿 生成完了")
-
-    except anthropic.APIError as e:
-        podcast_text = f"\n\n⚠️ Podcast原稿生成エラー: {e}\n"
-        print(podcast_text)
-
-    return podcast_text
+    return "\n".join(sections)
 
 
 def save_report(
     company_name: str,
-    report_text: str,
+    data_dump: str,
     output_dir: Path,
-    podcast_script: Optional[str] = None,
+    podcast_script: Optional[str] = None,  # 後方互換のため残す（未使用）
 ) -> Path:
-    """レポートをファイルに保存する（Podcast原稿を同ファイルの2セクション目に追記）"""
+    """データダンプをファイルに保存する"""
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # ファイル名に使えない文字を除去
     safe_name = "".join(c for c in company_name if c.isalnum() or c in "ー・_- ")
     safe_name = safe_name.strip()
     if not safe_name:
@@ -340,12 +238,8 @@ def save_report(
     filename = f"{safe_name}_cash_is_king.md"
     output_path = output_dir / filename
 
-    content = report_text
-    if podcast_script:
-        content += "\n\n---\n\n" + podcast_script
-
-    output_path.write_text(content, encoding="utf-8")
-    print(f"\n[Reporter] レポートを保存しました: {output_path}")
+    output_path.write_text(data_dump, encoding="utf-8")
+    print(f"\n[Reporter] ファイルを保存しました: {output_path}")
     return output_path
 
 
@@ -359,14 +253,12 @@ def build_sources_list(
     sources = []
     today = datetime.date.today().isoformat()
 
-    # yfinance
     sources.append({
         "name": f"yfinance ({yf_ticker})",
         "url": f"https://finance.yahoo.com/quote/{yf_ticker}",
         "date": today,
     })
 
-    # EDINET
     if edinet_result and edinet_result.get("source_url"):
         sources.append({
             "name": f"有価証券報告書（EDINET）{edinet_result.get('submit_date', '')}",
@@ -374,7 +266,6 @@ def build_sources_list(
             "date": today,
         })
 
-    # IRページ
     if ir_result and ir_result.get("ir_url"):
         sources.append({
             "name": "IRページ",
@@ -382,16 +273,14 @@ def build_sources_list(
             "date": today,
         })
 
-    # IRページのPDF
     for pdf_info in (ir_result or {}).get("pdfs", []):
         url = pdf_info.get("url", "")
         sources.append({
-            "name": f"決算説明資料PDF",
+            "name": "決算説明資料PDF",
             "url": url,
             "date": pdf_info.get("retrieved_date", today),
         })
 
-    # ニュース
     for item in news_data.get("company_news", [])[:10]:
         url = item.get("url", "")
         if url:

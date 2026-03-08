@@ -39,8 +39,7 @@ from agent.analyzer import (
     build_competitor_comparison,
 )
 from agent.reporter import (
-    generate_report,
-    generate_podcast_script,
+    build_data_dump,
     save_report,
     build_sources_list,
 )
@@ -103,15 +102,11 @@ def parse_args():
 
 
 def check_api_keys():
-    """必要なAPIキーの確認"""
-    missing = []
+    """必要なAPIキーの確認（EDINET・Anthropicは任意）"""
+    if not os.environ.get("EDINET_API_KEY"):
+        print("ℹ️  EDINET_API_KEY 未設定 → --skip-edinet で代替可")
     if not os.environ.get("ANTHROPIC_API_KEY"):
-        missing.append("ANTHROPIC_API_KEY")
-    if missing:
-        print(f"⚠️  以下のAPIキーが設定されていません: {', '.join(missing)}")
-        print("   .env ファイルに設定してください。")
-        if "ANTHROPIC_API_KEY" in missing:
-            sys.exit(1)
+        print("ℹ️  ANTHROPIC_API_KEY 未設定 → データ収集のみ実行。出力ファイルをClaude.aiに貼り付けてください")
 
 
 def main():
@@ -234,9 +229,9 @@ def main():
         )
 
     # -------------------------------------------------------------------
-    # STEP 3-5: 参照資料リスト構築 → LLMでレポート生成
+    # STEP 3: 参照資料リスト構築 → データダンプ生成
     # -------------------------------------------------------------------
-    print("\n【STEP 3-5】Cash is King分析レポート生成\n")
+    print("\n【STEP 3】データファイル生成\n")
 
     sources = build_sources_list(
         edinet_result=edinet_result,
@@ -245,7 +240,7 @@ def main():
         yf_ticker=ticker,
     )
 
-    report_text = generate_report(
+    data_dump = build_data_dump(
         company_name=company_name,
         ticker=ticker,
         financial_summary=financial_summary,
@@ -258,20 +253,17 @@ def main():
     )
 
     # -------------------------------------------------------------------
-    # Podcast原稿生成
+    # ファイル保存
     # -------------------------------------------------------------------
-    print("\n【STEP 6】Podcast原稿生成\n")
-    print("=" * 60)
-    podcast_script = generate_podcast_script(company_name, report_text)
-    print("=" * 60)
-
-    # -------------------------------------------------------------------
-    # レポート保存（リサーチ + Podcast原稿を同ファイルに）
-    # -------------------------------------------------------------------
-    output_path = save_report(company_name, report_text, output_dir, podcast_script=podcast_script)
+    output_path = save_report(company_name, data_dump, output_dir)
     print(f"\n{'='*60}")
-    print(f"✅ 分析完了!")
-    print(f"   レポート＋Podcast原稿: {output_path}")
+    print(f"✅ データ収集完了!")
+    print(f"   出力ファイル: {output_path}")
+    print(f"")
+    print(f"   次のステップ:")
+    print(f"   1. 上記ファイルをテキストエディタで開く")
+    print(f"   2. ファイル全体をコピーしてClaude.aiに貼り付ける")
+    print(f"   3. リサーチレポート＋Podcast原稿が生成されます")
     print(f"{'='*60}\n")
 
 
