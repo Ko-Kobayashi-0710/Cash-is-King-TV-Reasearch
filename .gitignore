@@ -1,0 +1,35 @@
+# APIキー・環境変数
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# 出力ファイル（個人データ含む可能性があるため）
+# output/ のみgitignore（.gitkeepは追跡する）
+output/*.md
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
