@@ -36,6 +36,8 @@ from agent.analyzer import (
     calculate_cf_metrics,
     calculate_ccc,
     calculate_roic,
+    calculate_ebitda_metrics,
+    calculate_capex_vs_da,
     format_financial_summary,
     build_competitor_comparison,
 )
@@ -204,6 +206,8 @@ def main():
     cf_metrics = calculate_cf_metrics(yf_data)
     ccc_data = calculate_ccc(bs_metrics, pl_metrics)
     roic_data = calculate_roic(yf_data)
+    ebitda_metrics = calculate_ebitda_metrics(yf_data)
+    capex_da_data = calculate_capex_vs_da(yf_data)
 
     # 財務サマリー文字列生成
     financial_summary = format_financial_summary(
@@ -215,6 +219,8 @@ def main():
         cf_metrics=cf_metrics,
         ccc_data=ccc_data,
         roic_data=roic_data,
+        ebitda_metrics=ebitda_metrics,
+        capex_da_data=capex_da_data,
     )
 
     # 競合比較テーブル生成

@@ -295,6 +295,139 @@ def calculate_ccc(bs_metrics: dict, pl_metrics: dict) -> dict:
     return ccc_data
 
 
+def calculate_ebitda_metrics(yf_data: dict) -> dict:
+    """
+    EBITDAと販管費（SG&A）の時系列を計算する。
+    定石6の「会計 vs ファイナンス乖離分析」に使用。
+    EBITDA = 営業利益 + 減価償却費
+    EBITDAマージン乖離 = EBITDAマージン - 営業利益率
+    """
+    result = {}
+    fin = yf_data.get("financials", {})
+
+    # 減価償却費（D&A）時系列
+    da_series = _get_series(fin, "Reconciled Depreciation", 5)
+    if not da_series:
+        da_series = _get_series(fin, "Depreciation And Amortization", 5)
+    if not da_series:
+        da_series = _get_series(fin, "Depreciation", 5)
+    result["da_series"] = da_series
+
+    # 営業利益時系列
+    op_income_series = _get_series(fin, "Operating Income", 5)
+    if not op_income_series:
+        op_income_series = _get_series(fin, "EBIT", 5)
+
+    # 売上時系列
+    revenue_series = _get_series(fin, "Total Revenue", 5)
+    if not revenue_series:
+        revenue_series = _get_series(fin, "Revenue", 5)
+
+    # EBITDA時系列 = 営業利益 + D&A
+    ebitda_series = {}
+    for date in op_income_series:
+        op = op_income_series.get(date)
+        da = da_series.get(date, 0) or 0
+        if op is not None:
+            ebitda_series[date] = op + da
+    result["ebitda_series"] = ebitda_series
+
+    # EBITDAマージン時系列
+    ebitda_margin_series = {}
+    for date in ebitda_series:
+        ebitda = ebitda_series.get(date)
+        rev = revenue_series.get(date)
+        if ebitda is not None and rev and rev != 0:
+            ebitda_margin_series[date] = round(ebitda / rev * 100, 2)
+    result["ebitda_margin_series"] = ebitda_margin_series
+
+    # 営業利益率時系列（乖離計算用）
+    op_margin_series = {}
+    for date in op_income_series:
+        op = op_income_series.get(date)
+        rev = revenue_series.get(date)
+        if op is not None and rev and rev != 0:
+            op_margin_series[date] = round(op / rev * 100, 2)
+    result["op_margin_series"] = op_margin_series
+
+    # EBITDAマージン vs 営業利益率の乖離（定石6の核心）
+    margin_gap_series = {}
+    for date in ebitda_margin_series:
+        ebitda_m = ebitda_margin_series.get(date)
+        op_m = op_margin_series.get(date)
+        if ebitda_m is not None and op_m is not None:
+            margin_gap_series[date] = round(ebitda_m - op_m, 2)
+    result["ebitda_op_gap_series"] = margin_gap_series
+
+    # 販管費（SG&A）時系列
+    sga_series = _get_series(fin, "Selling General Administrative", 5)
+    if not sga_series:
+        sga_series = _get_series(fin, "Selling And Marketing Expense", 5)
+    result["sga_series"] = sga_series
+
+    # 販管費率（SG&A / 売上）時系列
+    sga_ratio_series = {}
+    for date in sga_series:
+        sga = sga_series.get(date)
+        rev = revenue_series.get(date)
+        if sga is not None and rev and rev != 0:
+            sga_ratio_series[date] = round(abs(sga) / rev * 100, 2)
+    result["sga_ratio_series"] = sga_ratio_series
+
+    return result
+
+
+def calculate_capex_vs_da(yf_data: dict) -> dict:
+    """
+    設備投資（CapEx）vs 減価償却費（D&A）の比較。
+    定石4の「投資フェーズか回収フェーズかの判定」に使用。
+    CapEx > D&A → 投資フェーズ（資産を積み増している）
+    CapEx < D&A → 回収フェーズ（過去の投資を回収中）
+    """
+    result = {}
+    cf = yf_data.get("cashflow", {})
+    fin = yf_data.get("financials", {})
+
+    # CapEx時系列（CFから取得）
+    capex_series = _get_series(cf, "Capital Expenditure", 5)
+    if not capex_series:
+        capex_series = _get_series(cf, "Capital Expenditures", 5)
+    # CapExは通常マイナス表記なので絶対値に変換
+    capex_abs_series = {d: abs(v) for d, v in capex_series.items() if v is not None}
+    result["capex_series"] = capex_abs_series
+
+    # D&A時系列（PLまたはCFから取得）
+    da_series = _get_series(fin, "Reconciled Depreciation", 5)
+    if not da_series:
+        da_series = _get_series(fin, "Depreciation And Amortization", 5)
+    if not da_series:
+        da_series = _get_series(cf, "Depreciation And Amortization", 5)
+    result["da_series"] = da_series
+
+    # CapEx / D&A 比率（1未満 = 回収フェーズ、1超 = 投資フェーズ）
+    capex_da_ratio_series = {}
+    for date in capex_abs_series:
+        capex = capex_abs_series.get(date)
+        da = da_series.get(date)
+        if capex is not None and da and da != 0:
+            capex_da_ratio_series[date] = round(capex / da, 2)
+    result["capex_da_ratio_series"] = capex_da_ratio_series
+
+    # 売上に対するCapEx比率
+    revenue_series = _get_series(fin, "Total Revenue", 5)
+    if not revenue_series:
+        revenue_series = _get_series(fin, "Revenue", 5)
+    capex_ratio_series = {}
+    for date in capex_abs_series:
+        capex = capex_abs_series.get(date)
+        rev = revenue_series.get(date)
+        if capex is not None and rev and rev != 0:
+            capex_ratio_series[date] = round(capex / rev * 100, 2)
+    result["capex_ratio_series"] = capex_ratio_series
+
+    return result
+
+
 def calculate_roic(yf_data: dict) -> dict:
     """
     ROICを計算する
@@ -355,6 +488,8 @@ def format_financial_summary(
     cf_metrics: dict,
     ccc_data: dict,
     roic_data: dict,
+    ebitda_metrics: Optional[dict] = None,
+    capex_da_data: Optional[dict] = None,
 ) -> str:
     """財務サマリーをMarkdown形式の文字列にフォーマットする"""
 
@@ -443,6 +578,51 @@ def format_financial_summary(
     if roic_data.get("roic"):
         lines.append(f"- ROIC（簡易）: {fmt_pct(roic_data.get('roic'))}")
     lines.append("")
+
+    # 定石6: EBITDA vs 営業利益率の乖離（会計 vs ファイナンス）
+    if ebitda_metrics:
+        lines.append("### 定石6: EBITDAマージン vs 営業利益率（会計・ファイナンス乖離）")
+        ebitda_margin_series = ebitda_metrics.get("ebitda_margin_series", {})
+        op_margin_series = ebitda_metrics.get("op_margin_series", {})
+        gap_series = ebitda_metrics.get("ebitda_op_gap_series", {})
+        sga_ratio_series = ebitda_metrics.get("sga_ratio_series", {})
+        if ebitda_margin_series:
+            lines.append("| 期 | EBITDAマージン | 営業利益率 | 乖離幅 | 販管費率 |")
+            lines.append("|---|---|---|---|---|")
+            for date in list(ebitda_margin_series.keys())[:5]:
+                em = ebitda_margin_series.get(date)
+                om = op_margin_series.get(date)
+                gap = gap_series.get(date)
+                sga = sga_ratio_series.get(date)
+                lines.append(f"| {date} | {fmt_pct(em)} | {fmt_pct(om)} | {fmt_pct(gap)} | {fmt_pct(sga)} |")
+            lines.append("")
+            lines.append("※ 乖離幅（EBITDAマージン - 営業利益率）が大きいほど「投じた資産が長期間稼ぎ続ける構造」を示唆")
+        else:
+            lines.append("（EBITDAデータを取得できませんでした）")
+        lines.append("")
+
+    # 定石4: CapEx vs 減価償却（投資フェーズ vs 回収フェーズ）
+    if capex_da_data:
+        lines.append("### 定石4: CapEx vs 減価償却費（投資・回収フェーズ判定）")
+        capex_series = capex_da_data.get("capex_series", {})
+        da_series = capex_da_data.get("da_series", {})
+        ratio_series = capex_da_data.get("capex_da_ratio_series", {})
+        capex_rev_series = capex_da_data.get("capex_ratio_series", {})
+        if capex_series or da_series:
+            lines.append("| 期 | CapEx | 減価償却費 | CapEx/D&A比率 | CapEx/売上比 |")
+            lines.append("|---|---|---|---|---|")
+            all_dates = sorted(set(list(capex_series.keys()) + list(da_series.keys())), reverse=True)[:5]
+            for date in all_dates:
+                capex = capex_series.get(date)
+                da = da_series.get(date)
+                ratio = ratio_series.get(date)
+                capex_rev = capex_rev_series.get(date)
+                lines.append(f"| {date} | {fmt_bn(capex)} | {fmt_bn(da)} | {fmt_num(ratio)}x | {fmt_pct(capex_rev)} |")
+            lines.append("")
+            lines.append("※ CapEx/D&A < 1.0 → 回収フェーズ（過去の投資を回収中）、> 1.0 → 投資フェーズ（資産積み増し中）")
+        else:
+            lines.append("（CapEx・D&Aデータを取得できませんでした）")
+        lines.append("")
 
     return "\n".join(lines)
 
