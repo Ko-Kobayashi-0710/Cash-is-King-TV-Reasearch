@@ -345,16 +345,20 @@ def fetch_article_content(url: str, max_chars: int = 3000) -> Optional[str]:
 # 層3: Web検索 + 記事全文取得
 # ---------------------------------------------------------------------------
 
-def web_search(query: str, max_results: int = 10) -> list[dict]:
+def web_search(query: str, max_results: int = 10, timelimit: str = None) -> list[dict]:
     """
     Web検索を実行して結果を返す。
+    timelimit: 'd'=1日, 'w'=1週間, 'm'=1ヶ月, 'y'=1年 (DuckDuckGo形式)
     """
     results = []
 
     if HAS_DDG:
         try:
             with DDGS() as ddgs:
-                for r in ddgs.text(query, max_results=max_results):
+                kwargs = {"max_results": max_results}
+                if timelimit:
+                    kwargs["timelimit"] = timelimit
+                for r in ddgs.text(query, **kwargs):
                     results.append({
                         "title": r.get("title", ""),
                         "url": r.get("href", ""),
@@ -407,9 +411,15 @@ def _enrich_with_full_text(results: list[dict], max_articles: int = 5) -> list[d
 def fetch_news_and_industry(company_name: str, ticker: str) -> dict:
     """
     企業・業界に関するニュース・インタビュー・ブログ・業界動向を網羅的に収集する。
+    直近2〜3年（過去2年以内）を優先して検索する。
     検索ヒットした記事の全文を取得する。
     """
     print(f"[Web] {company_name} の情報を網羅的に収集中...")
+
+    # 現在年を動的に取得し、直近3年分を対象にする
+    current_year = datetime.date.today().year
+    year_range = f"{current_year - 2} {current_year - 1} {current_year}"  # 例: "2024 2025 2026"
+
     result = {
         "company_news": [],
         "interviews": [],
@@ -417,46 +427,56 @@ def fetch_news_and_industry(company_name: str, ticker: str) -> dict:
         "analyst_reports": [],
     }
 
-    # --- 企業ニュース・決算 ---
+    # --- 企業ニュース・決算（直近2年以内を優先） ---
     news_queries = [
-        f"{company_name} 決算 業績 2024 2025",
-        f"{company_name} M&A 事業戦略 提携",
-        f"{ticker} earnings results 2024 2025",
-        f"{company_name} 新サービス 新規事業",
+        f"{company_name} 決算 業績 {year_range}",
+        f"{company_name} M&A 事業戦略 提携 {current_year - 1} {current_year}",
+        f"{ticker} earnings results {current_year - 1} {current_year}",
+        f"{company_name} 新サービス 新規事業 {current_year}",
     ]
     for query in news_queries:
-        hits = web_search(query, max_results=5)
+        # timelimit='y' で直近1年を優先
+        hits = web_search(query, max_results=5, timelimit="y")
+        if len(hits) < 3:
+            # 直近1年で不足なら2年に広げる
+            hits = web_search(query, max_results=5)
         result["company_news"].extend(hits)
 
     # --- CEO・経営陣インタビュー ---
     interview_queries = [
-        f"{company_name} 社長 CEO インタビュー",
+        f"{company_name} 社長 CEO インタビュー {current_year - 1} {current_year}",
         f"{company_name} 代表取締役 対談 経営戦略",
         f"{company_name} founder interview note",
-        f'"{company_name}" CEO interview 2024 2025',
+        f'"{company_name}" CEO interview {current_year - 1} {current_year}',
     ]
     for query in interview_queries:
-        hits = web_search(query, max_results=5)
+        hits = web_search(query, max_results=5, timelimit="y")
+        if len(hits) < 3:
+            hits = web_search(query, max_results=5)
         result["interviews"].extend(hits)
 
     # --- 業界・市場分析 ---
     industry_queries = [
-        f"{company_name} 業界 市場規模 トレンド 2024 2025",
-        f"{company_name} 競合比較 シェア",
+        f"{company_name} 業界 市場規模 トレンド {current_year - 1} {current_year}",
+        f"{company_name} 競合比較 シェア {current_year - 1} {current_year}",
         f"{company_name} ビジネスモデル 解説 分析",
         f"{company_name} site:note.com OR site:diamond.jp OR site:toyokeizai.net",
     ]
     for query in industry_queries:
-        hits = web_search(query, max_results=5)
+        hits = web_search(query, max_results=5, timelimit="y")
+        if len(hits) < 3:
+            hits = web_search(query, max_results=5)
         result["industry_trends"].extend(hits)
 
     # --- アナリスト・投資家レポート ---
     analyst_queries = [
-        f"{company_name} アナリスト レポート 投資判断",
-        f"{company_name} 株主 投資家向け説明",
+        f"{company_name} アナリスト レポート 投資判断 {current_year - 1} {current_year}",
+        f"{company_name} 株主 投資家向け説明 {current_year}",
     ]
     for query in analyst_queries:
-        hits = web_search(query, max_results=5)
+        hits = web_search(query, max_results=5, timelimit="y")
+        if len(hits) < 3:
+            hits = web_search(query, max_results=5)
         result["analyst_reports"].extend(hits)
 
     # 重複除去
